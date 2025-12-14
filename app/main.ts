@@ -1,12 +1,29 @@
-
+import * as fs from 'fs';
 
 const args = process.argv;
-const bencodedValue = args[3];
+const command = args[2];
 
-if (args[2] === "decode") {
+if (command === "decode") {
+    const bencodedValue = args[3];
     try {
         const decoded = decodeBencode(bencodedValue);
         console.log(JSON.stringify(decoded));
+    } catch (error) {
+        console.error(error.message);
+    }
+} else if (command === "info") {
+    const filename = args[3];
+    try {
+        const fileContent = fs.readFileSync(filename);
+        const decoded = decodeBencode(fileContent.toString('binary'));
+
+        console.log("Decoded torrent file content:", decoded);
+
+        const trackerUrl = decoded['announce'];
+        const length = decoded['info']['length'];
+
+        console.log(`Tracker URL: ${trackerUrl}`);
+        console.log(`Length: ${length}`);
     } catch (error) {
         console.error(error.message);
     }
