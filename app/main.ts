@@ -25,6 +25,9 @@ if (command === "decode") {
         const trackerUrl = decoded['announce'];
         const info = decoded['info'];
         const length = info['length'];
+        const name = info['name'];
+        const pieceLength = info['piece length'];
+        const pieces = info['pieces'];
 
         const bencodedInfo = encodeBencode(info);
         const infoHash = crypto.createHash('sha1').update(bencodedInfo, 'binary').digest('hex');
@@ -32,6 +35,14 @@ if (command === "decode") {
         console.log(`Tracker URL: ${trackerUrl}`);
         console.log(`Length: ${length}`);
         console.log(`Info Hash: ${infoHash}`);
+        console.log(`Piece Length: ${pieceLength}`);
+
+        console.log('Piece Hashes:');
+        for (let i = 0; i < pieces.length; i += 20) {
+            const piece = pieces.substring(i, i + 20);
+            const pieceHash = Buffer.from(piece, 'binary').toString('hex');
+            console.log(pieceHash);
+        }
     } catch (error) {
         console.error(error.message);
     }
