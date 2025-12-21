@@ -1,5 +1,6 @@
 import * as fs from 'fs';
 import * as crypto from 'crypto';
+import * as net from 'net';
 import { decodeBencode, encodeBencode } from './bencode';
 
 const args = process.argv;
@@ -7,6 +8,7 @@ const command = args[2];
 
 if (command === "decode") {
     const bencodedValue = args[3];
+
     try {
         const decoded = decodeBencode(bencodedValue);
         console.log(JSON.stringify(decoded));
@@ -15,6 +17,7 @@ if (command === "decode") {
     }
 } else if (command === "info") {
     const filename = args[3];
+
     try {
         const fileContent = fs.readFileSync(filename);
         const decoded = decodeBencode(fileContent.toString('binary'));
@@ -47,6 +50,7 @@ if (command === "decode") {
     }
 } else if (command === "peers") {
     const filename = args[3];
+
     try {
         const fileContent = fs.readFileSync(filename);
         const decoded = decodeBencode(fileContent.toString('binary'));
@@ -111,6 +115,62 @@ if (command === "decode") {
             const port = (peersBinary.charCodeAt(i + 4) << 8) | peersBinary.charCodeAt(i + 5);
             console.log(`${ip}:${port}`);
         }
+    } catch (error) {
+        console.error(error.message);
+    }
+} else if (command === "handshake") {
+    const filename = args[3];
+    const peerAddress = args[4];
+    const [peerIp, peerPort] = peerAddress.split(':');
+
+    try {
+        const fileContent = fs.readFileSync(filename);
+        const decoded = decodeBencode(fileContent.toString('binary'));
+
+        console.log("Decoded torrent file content:");
+        console.log(JSON.stringify(decoded, null, 2));
+
+        const trackerUrl = decoded['announce'];
+        const info = decoded['info'];
+        const length = info['length'];
+        const name = info['name'];
+        const pieceLength = info['piece length'];
+        const pieces = info['pieces'];
+
+        const bencodedInfo = encodeBencode(info);
+        const infoHashBuffer = crypto.createHash('sha1').update(bencodedInfo, 'binary').digest();
+
+        const protocolString = "BitTorrent protocol";
+        const reservedBytes = Buffer.alloc(8);
+        const peerId = crypto.randomBytes(20);
+
+        const handshakeMessage = Buffer.concat([
+            Buffer.from([protocolString.length]),
+            Buffer.from(protocolString),
+            reservedBytes,
+            infoHashBuffer,
+            peerId
+        ]);
+
+        const client = new net.Socket();
+        client.connect(parseInt(peerPort), peerIp, () => {
+            client.write(handshakeMessage);
+        });
+
+        let receivedData = Buffer.alloc(0);
+        client.on('data', (data) => {
+            receivedData = Buffer.concat([receivedData, data]);
+            if (receivedData.length >= 68) {
+                const receivedPeerId = receivedData.subarray(48, 68);
+                console.log(`Peer ID: ${receivedPeerId.toString('hex')}`);
+                client.end();
+            }
+        });
+
+        client.on('error', (err) => {
+            console.error(`Error: ${err.message}`);
+        });
+
     } catch (error) {
         console.error(error.message);
     }
