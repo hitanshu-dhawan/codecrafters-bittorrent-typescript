@@ -13,7 +13,11 @@ if (command === "decode") {
         const decoded = decodeBencode(bencodedValue);
         console.log(JSON.stringify(decoded));
     } catch (error) {
-        console.error(error.message);
+        if (error instanceof Error) {
+            console.error(error.message);
+        } else {
+            console.error('An unexpected error occurred:', error);
+        }
     }
 } else if (command === "info") {
     const filename = args[3];
@@ -46,7 +50,11 @@ if (command === "decode") {
             console.log(pieceHash);
         }
     } catch (error) {
-        console.error(error.message);
+        if (error instanceof Error) {
+            console.error(error.message);
+        } else {
+            console.error('An unexpected error occurred:', error);
+        }
     }
 } else if (command === "peers") {
     const filename = args[3];
@@ -106,17 +114,21 @@ if (command === "decode") {
         const peersBinary = trackerResponse['peers'];
 
         for (let i = 0; i < peersBinary.length; i += 6) {
-            const ip = [
+            const peerIp = [
                 peersBinary.charCodeAt(i),
                 peersBinary.charCodeAt(i + 1),
                 peersBinary.charCodeAt(i + 2),
                 peersBinary.charCodeAt(i + 3)
             ].join('.');
-            const port = (peersBinary.charCodeAt(i + 4) << 8) | peersBinary.charCodeAt(i + 5);
-            console.log(`${ip}:${port}`);
+            const peerPort = (peersBinary.charCodeAt(i + 4) << 8) | peersBinary.charCodeAt(i + 5);
+            console.log(`${peerIp}:${peerPort}`);
         }
     } catch (error) {
-        console.error(error.message);
+        if (error instanceof Error) {
+            console.error(error.message);
+        } else {
+            console.error('An unexpected error occurred:', error);
+        }
     }
 } else if (command === "handshake") {
     const filename = args[3];
@@ -150,16 +162,16 @@ if (command === "decode") {
             reservedBytes,
             infoHashBuffer,
             peerId
-        ]);
+        ] as any);
 
         const client = new net.Socket();
         client.connect(parseInt(peerPort), peerIp, () => {
-            client.write(handshakeMessage);
+            client.write(handshakeMessage as any);
         });
 
         let receivedData = Buffer.alloc(0);
         client.on('data', (data) => {
-            receivedData = Buffer.concat([receivedData, data]);
+            receivedData = Buffer.concat([receivedData, data] as any);
             if (receivedData.length >= 68) {
                 const receivedPeerId = receivedData.subarray(48, 68);
                 console.log(`Peer ID: ${receivedPeerId.toString('hex')}`);
@@ -172,6 +184,206 @@ if (command === "decode") {
         });
 
     } catch (error) {
-        console.error(error.message);
+        if (error instanceof Error) {
+            console.error(error.message);
+        } else {
+            console.error('An unexpected error occurred:', error);
+        }
+    }
+} else if (command === "download_piece") {
+    const outputPath = args[4];
+    const torrentFilePath = args[5];
+    const pieceIndex = parseInt(args[6]);
+
+    try {
+        const fileContent = fs.readFileSync(torrentFilePath);
+        const decoded = decodeBencode(fileContent.toString('binary'));
+
+        console.log("Decoded torrent file content:");
+        console.log(JSON.stringify(decoded, null, 2));
+
+        const trackerUrl = decoded['announce'];
+        const info = decoded['info'];
+        const length = info['length'];
+        const name = info['name'];
+        const pieceLength = info['piece length'];
+        const pieces = info['pieces'];
+
+        const bencodedInfo = encodeBencode(info);
+        const infoHashBuffer = crypto.createHash('sha1').update(bencodedInfo, 'binary').digest();
+
+        let infoHashEncoded = '';
+        for (const byte of infoHashBuffer) {
+            infoHashEncoded += '%' + byte.toString(16).padStart(2, '0');
+        }
+
+        const peerId = crypto.randomBytes(10).toString('hex');
+        const port = 6881;
+        const uploaded = 0;
+        const downloaded = 0;
+        const left = length;
+        const compact = 1;
+
+        const queryParams = [
+            `info_hash=${infoHashEncoded}`,
+            `peer_id=${peerId}`,
+            `port=${port}`,
+            `uploaded=${uploaded}`,
+            `downloaded=${downloaded}`,
+            `left=${left}`,
+            `compact=${compact}`
+        ].join('&');
+
+        const url = `${trackerUrl}?${queryParams}`;
+
+        console.log(`Contacting tracker at: ${url}`);
+
+        const response = await fetch(url);
+        const responseBuffer = await response.arrayBuffer();
+        const responseBody = Buffer.from(responseBuffer).toString('binary');
+
+        const trackerResponse = decodeBencode(responseBody);
+
+        console.log("Tracker response:");
+        console.log(JSON.stringify(trackerResponse, null, 2));
+
+        const peersBinary = trackerResponse['peers'];
+
+        const peerIp = [
+            peersBinary.charCodeAt(0),
+            peersBinary.charCodeAt(1),
+            peersBinary.charCodeAt(2),
+            peersBinary.charCodeAt(3)
+        ].join('.');
+        const peerPort = (peersBinary.charCodeAt(4) << 8) | peersBinary.charCodeAt(5);
+
+        const protocolString = "BitTorrent protocol";
+        const reservedBytes = Buffer.alloc(8);
+
+        const handshakeMessage = Buffer.concat([
+            Buffer.from([protocolString.length]),
+            Buffer.from(protocolString),
+            reservedBytes,
+            infoHashBuffer,
+            Buffer.from(peerId)
+        ] as any);
+
+        const client = new net.Socket();
+        client.connect(peerPort, peerIp, () => {
+            client.write(handshakeMessage as any);
+        });
+
+        let receivedData = Buffer.alloc(0);
+        let handshakeReceived = false;
+        let bitfieldReceived = false;
+
+        const totalLength = length;
+        const numPieces = Math.ceil(totalLength / pieceLength);
+        let currentPieceLength = pieceLength;
+        if (pieceIndex === numPieces - 1) {
+            const remainder = totalLength % pieceLength;
+            if (remainder !== 0) currentPieceLength = remainder;
+        }
+
+        const BLOCK_SIZE = 16 * 1024;
+        const totalBlocks = Math.ceil(currentPieceLength / BLOCK_SIZE);
+        let downloadedBlocks = 0;
+        const pieceBuffer = Buffer.alloc(currentPieceLength);
+        let currentBlockIndex = 0;
+
+        const requestBlock = () => {
+            if (currentBlockIndex >= totalBlocks) return;
+
+            const begin = currentBlockIndex * BLOCK_SIZE;
+            let length = BLOCK_SIZE;
+            if (currentBlockIndex === totalBlocks - 1) {
+                length = currentPieceLength - begin;
+            }
+
+            const payload = Buffer.alloc(12);
+            payload.writeUInt32BE(pieceIndex, 0);
+            payload.writeUInt32BE(begin, 4);
+            payload.writeUInt32BE(length, 8);
+
+            const messageLen = Buffer.alloc(4);
+            messageLen.writeUInt32BE(1 + 12, 0);
+
+            const requestMsg = Buffer.concat([
+                messageLen,
+                Buffer.from([6]),
+                payload
+            ]);
+            client.write(requestMsg);
+            currentBlockIndex++;
+        };
+
+        client.on('data', (data) => {
+            receivedData = Buffer.concat([receivedData, data]);
+
+            if (!handshakeReceived) {
+                if (receivedData.length >= 68) {
+                    handshakeReceived = true;
+                    receivedData = receivedData.subarray(68);
+                } else {
+                    return;
+                }
+            }
+
+            while (receivedData.length >= 4) {
+                const messageLength = receivedData.readUInt32BE(0);
+                if (receivedData.length < 4 + messageLength) {
+                    break;
+                }
+
+                const message = receivedData.subarray(0, 4 + messageLength);
+                receivedData = receivedData.subarray(4 + messageLength);
+
+                if (messageLength === 0) continue;
+
+                const messageId = message[4];
+
+                if (messageId === 5) {
+                    bitfieldReceived = true;
+                    const interested = Buffer.from([0, 0, 0, 1, 2]);
+                    client.write(interested);
+                } else if (messageId === 1) {
+                    requestBlock();
+                } else if (messageId === 7) {
+                    const index = message.readUInt32BE(5);
+                    const begin = message.readUInt32BE(9);
+                    const block = message.subarray(13);
+
+                    block.copy(pieceBuffer, begin);
+                    downloadedBlocks++;
+
+                    if (downloadedBlocks < totalBlocks) {
+                        requestBlock();
+                    } else {
+                        client.end();
+                        const pieceHash = crypto.createHash('sha1').update(pieceBuffer).digest('hex');
+                        const expectedHash = pieces.substring(pieceIndex * 20, (pieceIndex + 1) * 20);
+                        const expectedHashHex = Buffer.from(expectedHash, 'binary').toString('hex');
+
+                        if (pieceHash === expectedHashHex) {
+                            fs.writeFileSync(outputPath, pieceBuffer);
+                            console.log(`Piece ${pieceIndex} downloaded to ${outputPath}.`);
+                        } else {
+                            console.error(`Piece hash mismatch. Expected ${expectedHashHex}, got ${pieceHash}`);
+                        }
+                    }
+                }
+            }
+        });
+
+        client.on('error', (err) => {
+            console.error(`Error: ${err.message}`);
+        });
+
+    } catch (error) {
+        if (error instanceof Error) {
+            console.error(error.message);
+        } else {
+            console.error('An unexpected error occurred:', error);
+        }
     }
 }
